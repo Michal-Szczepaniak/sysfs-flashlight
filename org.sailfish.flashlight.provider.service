@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.sailfish.flashlight.provider
+Exec=/usr/bin/sysfs-flashlight

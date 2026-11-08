@@ -1,0 +1,157 @@
+#!/usr/bin/python3
+
+import signal
+
+import dbus
+import dbus.mainloop.glib
+import dbus.service
+from gi.repository import GLib
+
+NAME = "org.sailfish.flashlight.provider"
+PATH = "/org/sailfish/flashlight/provider"
+IFACE = NAME
+PROPS_IFACE = "org.freedesktop.DBus.Properties"
+INTROSPECT_IFACE = "org.freedesktop.DBus.Introspectable"
+LEDFLASH = "/sys/kernel/debug/ledflash"
+IDLE_SECS = 30
+
+INTROSPECTION = """<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node>
+  <interface name="org.sailfish.flashlight.provider">
+    <property name="flashlightOn" type="b" access="read"/>
+    <signal name="flashlightOnChanged">
+      <arg name="newOn" type="b" direction="out"/>
+    </signal>
+    <method name="toggleFlashlight">
+      <arg type="b" direction="out"/>
+    </method>
+  </interface>
+  <interface name="org.freedesktop.DBus.Properties">
+    <method name="Get">
+      <arg name="interface_name" type="s" direction="in"/>
+      <arg name="property_name" type="s" direction="in"/>
+      <arg name="value" type="v" direction="out"/>
+    </method>
+    <method name="Set">
+      <arg name="interface_name" type="s" direction="in"/>
+      <arg name="property_name" type="s" direction="in"/>
+      <arg name="value" type="v" direction="in"/>
+    </method>
+    <method name="GetAll">
+      <arg name="interface_name" type="s" direction="in"/>
+      <arg name="values" type="a{sv}" direction="out"/>
+    </method>
+    <signal name="PropertiesChanged">
+      <arg name="interface_name" type="s" direction="out"/>
+      <arg name="changed_properties" type="a{sv}" direction="out"/>
+      <arg name="invalidated_properties" type="as" direction="out"/>
+    </signal>
+  </interface>
+  <interface name="org.freedesktop.DBus.Introspectable">
+    <method name="Introspect">
+      <arg name="xml_data" type="s" direction="out"/>
+    </method>
+  </interface>
+</node>
+"""
+
+
+def write_led(on):
+    with open(LEDFLASH, "w") as led:
+        led.write("1" if on else "0")
+
+
+class Flashlight(dbus.service.Object):
+    def __init__(self, bus, loop):
+        super().__init__(bus, PATH)
+        self.loop = loop
+        self.on = False
+        self.idle_timer = 0
+        self.arm_idle_timer()
+
+    def arm_idle_timer(self):
+        self.idle_timer = GLib.timeout_add_seconds(IDLE_SECS, self.idle_quit)
+
+    def idle_quit(self):
+        self.loop.quit()
+        return GLib.SOURCE_REMOVE
+
+    def shutdown(self):
+        if self.on:
+            write_led(False)
+        self.loop.quit()
+        return GLib.SOURCE_REMOVE
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="b")
+    def toggleFlashlight(self):
+        new_on = not self.on
+        try:
+            write_led(new_on)
+        except OSError as err:
+            print("failed to write %s: %s" % (LEDFLASH, err), flush=True)
+            return False
+
+        self.on = new_on
+        if self.on:
+            GLib.source_remove(self.idle_timer)
+            self.idle_timer = 0
+        else:
+            self.arm_idle_timer()
+
+        self.flashlightOnChanged(self.on)
+        self.PropertiesChanged(IFACE, {"flashlightOn": dbus.Boolean(self.on)}, [])
+        return True
+
+    @dbus.service.signal(IFACE, signature="b")
+    def flashlightOnChanged(self, newOn):
+        pass
+
+    @dbus.service.method(PROPS_IFACE, in_signature="ss", out_signature="v")
+    def Get(self, interface_name, property_name):
+        if interface_name == IFACE and property_name == "flashlightOn":
+            return dbus.Boolean(self.on)
+        raise dbus.exceptions.DBusException(
+            "No such property " + property_name,
+            name="org.freedesktop.DBus.Error.InvalidArgs")
+
+    @dbus.service.method(PROPS_IFACE, in_signature="ssv", out_signature="")
+    def Set(self, interface_name, property_name, value):
+        raise dbus.exceptions.DBusException(
+            property_name + " is read-only",
+            name="org.freedesktop.DBus.Error.PropertyReadOnly")
+
+    @dbus.service.method(PROPS_IFACE, in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface_name):
+        if interface_name not in (IFACE, ""):
+            return dbus.Dictionary({}, signature="sv")
+        return dbus.Dictionary({"flashlightOn": dbus.Boolean(self.on)},
+                               signature="sv")
+
+    @dbus.service.signal(PROPS_IFACE, signature="sa{sv}as")
+    def PropertiesChanged(self, interface_name, changed_properties,
+                          invalidated_properties):
+        pass
+
+    @dbus.service.method(INTROSPECT_IFACE, in_signature="", out_signature="s",
+                         path_keyword="object_path",
+                         connection_keyword="connection")
+    def Introspect(self, object_path, connection):
+        return INTROSPECTION
+
+
+def main():
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    loop = GLib.MainLoop()
+    bus = dbus.SessionBus()
+    flashlight = Flashlight(bus, loop)
+    name = dbus.service.BusName(NAME, bus)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM,
+                         flashlight.shutdown)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT,
+                         flashlight.shutdown)
+    loop.run()
+
+
+if __name__ == "__main__":
+    main()
