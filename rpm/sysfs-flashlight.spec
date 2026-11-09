@@ -26,7 +26,13 @@ which goes through the Android camera stack.
 install -D -m 755 sysfs-flashlight %{buildroot}%{_bindir}/sysfs-flashlight
 install -D -m 644 org.sailfish.flashlight.provider.service \
     %{buildroot}%{_datadir}/dbus-1/services/org.sailfish.flashlight.provider.service
+install -D -m 644 sysfs-flashlight.tmpfiles \
+    %{buildroot}%{_tmpfilesdir}/sysfs-flashlight.conf
+
+%post
+systemd-tmpfiles --create %{_tmpfilesdir}/sysfs-flashlight.conf || :
 
 %files
 %{_bindir}/sysfs-flashlight
 %{_datadir}/dbus-1/services/org.sailfish.flashlight.provider.service
+%{_tmpfilesdir}/sysfs-flashlight.conf
