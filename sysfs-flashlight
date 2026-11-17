@@ -12,7 +12,7 @@ PATH = "/org/sailfish/flashlight/provider"
 IFACE = NAME
 PROPS_IFACE = "org.freedesktop.DBus.Properties"
 INTROSPECT_IFACE = "org.freedesktop.DBus.Introspectable"
-LEDFLASH = "/sys/kernel/debug/ledflash"
+LEDFLASH = "/sys/class/leds/white:torch/brightness"
 IDLE_SECS = 30
 
 INTROSPECTION = """<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
